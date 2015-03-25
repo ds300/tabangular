@@ -200,7 +200,8 @@
         });
       }
       tab._elem = this.$compile(templateString.trim())(tab._scope);
-      return tab._elem.addClass("tabangular-hide");
+      tab._elem.addClass("tabangular-hide");
+      return tab._elemQ.resolve(true);
     };
 
     TabsService.prototype._compileContent = function(tab, parentScope, cb) {
@@ -232,6 +233,7 @@
       var cached, doCompile, url, waiting;
       type = angular.extend({}, tabTypeDefaults, type);
       tab._scope = type.scope ? parentScope.$new() : parentScope;
+      tab._scopeQ.resolve(true);
       doCompile = (function(_this) {
         return function(templateString) {
           _this._compileElem(tab, templateString, type.controller);
@@ -291,16 +293,31 @@
     __extends(Tab, _super);
 
     function Tab(area, type, options) {
+      var $q;
       this.area = area;
       this.type = type;
       this.options = options;
       Tab.__super__.constructor.call(this);
-      this.loading = true;
+      $q = this.area._service.$q;
       this.loadingDeferred = false;
+      this.loading = true;
       this.closed = false;
       this.focused = false;
       this._elem = null;
       this._scope = null;
+      this._elemQ = $q.defer();
+      this._scopeQ = $q.defer();
+      this._deferQ = $q.defer();
+      this._loadP = $q.all(this._elemQ.promise, this._scopeQ.promise, this._deferQ.promise);
+      this._loadP.then((function(_this) {
+        return function() {
+          _this.loading = false;
+          _this.area._scope.$root.$$phase || _this.area._scope.$apply();
+          if (!_this.closed) {
+            return _this.trigger('loaded');
+          }
+        };
+      })(this));
       this.enableAutoClose();
       this.on("_attach", (function(_this) {
         return function(data) {
@@ -317,13 +334,7 @@
     };
 
     Tab.prototype.doneLoading = function() {
-      if (this.loading) {
-        this.loading = false;
-        this.area._scope.$root.$$phase || this.area._scope.$apply();
-        if (!this.closed) {
-          this.trigger('loaded');
-        }
-      }
+      this._deferQ.resolve(true);
       return this;
     };
 
@@ -367,27 +378,25 @@
     };
 
     Tab.prototype.focus = function() {
-      var current, len;
-      if (this.loading) {
-        this.on("loaded", (function(_this) {
-          return function() {
-            return _this.focus();
-          };
-        })(this));
-      } else if (this.closed) {
+      if (this.closed) {
         throw new Error("Cannot focus closed tab");
       } else if (!this.focused) {
-        if ((len = this.area._focusStack.length) !== 0) {
-          current = this.area._focusStack[len - 1];
-          current._elem.addClass("tabangular-hide");
-          current.focused = false;
-        }
-        this.focused = true;
-        this._elem.removeClass("tabangular-hide");
-        removeFromArray(this.area._focusStack, this);
-        this.area._focusStack.push(this);
-        this.area._persist();
-        this.trigger("focused");
+        this._loadP.then((function(_this) {
+          return function() {
+            var current, len;
+            if ((len = _this.area._focusStack.length) !== 0) {
+              current = _this.area._focusStack[len - 1];
+              current._elem.addClass("tabangular-hide");
+              current.focused = false;
+            }
+            _this.focused = true;
+            _this._elem.removeClass("tabangular-hide");
+            removeFromArray(_this.area._focusStack, _this);
+            _this.area._focusStack.push(_this);
+            _this.area._persist();
+            return _this.trigger("focused");
+          };
+        })(this));
       }
       return this;
     };

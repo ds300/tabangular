@@ -151,6 +151,7 @@ class TabsService
       @$controller(ctrl, {$scope: tab._scope, Tab: tab})
     tab._elem = @$compile(templateString.trim())(tab._scope)
     tab._elem.addClass "tabangular-hide"
+    tab._elemQ.resolve true
 
 
   _compileContent: (tab, parentScope, cb) ->
@@ -180,6 +181,7 @@ class TabsService
   __compileContent: (tab, parentScope, cb, type) ->
     type = angular.extend {}, tabTypeDefaults, type
     tab._scope = if type.scope then parentScope.$new() else parentScope
+    tab._scopeQ.resolve true
     # maybe TODO: isolates and weird binding junk like directives
 
     # does the actual compilation once we found the template
@@ -230,12 +232,23 @@ class TabsService
 class Tab extends Evented
   constructor: (@area, @type, @options) ->
     super()
-    @loading = true
+    $q = @area._service.$q
     @loadingDeferred = false
+    @loading = true
     @closed = false
     @focused = false
     @_elem = null
     @_scope = null
+    @_elemQ = $q.defer()
+    @_scopeQ = $q.defer()
+    @_deferQ = $q.defer()
+    @_loadP = $q.all @_elemQ.promise, @_scopeQ.promise, @_deferQ.promise
+    @_loadP.then =>
+      @loading = false
+      @area._scope.$root.$$phase or @area._scope.$apply()
+      if not @closed
+        @trigger 'loaded'
+
     @enableAutoClose()
     @on "_attach", (data) =>
       if data.event is "loaded" and not @loading
@@ -246,11 +259,7 @@ class Tab extends Evented
     @
 
   doneLoading: ->
-    if @loading
-      @loading = false
-      @area._scope.$root.$$phase or @area._scope.$apply()
-      if not @closed
-        @trigger 'loaded'
+    @_deferQ.resolve(true);
     @
 
   close: (silent) ->
@@ -292,24 +301,23 @@ class Tab extends Evented
     @
 
   focus: ->
-    if @loading
-      @on "loaded", => @focus()
-    else if @closed
+    if @closed
       throw new Error "Cannot focus closed tab"
     else if not @focused
-      if (len = @area._focusStack.length) isnt 0
-        current = @area._focusStack[len-1]
-        current._elem.addClass "tabangular-hide"
-        current.focused = false
-      
-      @focused = true
+      @_loadP.then =>
+        if (len = @area._focusStack.length) isnt 0
+          current = @area._focusStack[len-1]
+          current._elem.addClass "tabangular-hide"
+          current.focused = false
+        
+        @focused = true
 
-      @_elem.removeClass "tabangular-hide"
-      removeFromArray @area._focusStack, @
-      @area._focusStack.push @
-      @area._persist()
+        @_elem.removeClass "tabangular-hide"
+        removeFromArray @area._focusStack, @
+        @area._focusStack.push @
+        @area._persist()
 
-      @trigger "focused"
+        @trigger "focused"
     @
 
   move: (toArea, idx) ->
